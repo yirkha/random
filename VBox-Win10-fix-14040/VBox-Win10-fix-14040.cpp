@@ -3,13 +3,13 @@
   Hooks VirtualBox service and delays a registry query during host-only
   network interface creation to fix compatibility with Windows 10.
   See https://www.virtualbox.org/ticket/14040 for details.
-  
+
   Copyright (c) 2015, Jiri Hruska <jirka@fud.cz>
-  
+
   Permission to use, copy, modify, and/or distribute this software for any
   purpose with or without fee is hereby granted, provided that the above
   copyright notice and this permission notice appear in all copies.
-  
+
   THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
   WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
   MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
@@ -385,11 +385,22 @@ detach:
           ctx.ContextFlags = CONTEXT_INTEGER | CONTEXT_CONTROL;
           GetThreadContext(g_hThread[de.dwThreadId], &ctx);
 
+#ifdef _WIN64
           // RCX = hKey, RDX = lpValueName, R8 = lpReserved, R9 = lpType
           WCHAR* lpValueName = (WCHAR*)readProcString(ctx.Rdx, 34, true);
+#else
+          // [ESP+04h] = hKey, [ESP+08h] = lpValueName, ...
+          LPVOID arg8;
+          readProcMem(ctx.Esp + 8, &arg8);
+          WCHAR* lpValueName = (WCHAR*)readProcString(arg8, 34, true);
+#endif
           if (lpValueName && wcscmp(lpValueName, L"NetCfgInstanceId") == 0) {
             LPVOID lpReturnAddr;
+#ifdef _WIN64
             readProcMem(ctx.Rsp, &lpReturnAddr);
+#else
+            readProcMem(ctx.Esp, &lpReturnAddr);
+#endif
             MEMORY_BASIC_INFORMATION mbi;
             VirtualQueryEx(g_hProcess, lpReturnAddr, &mbi, sizeof(mbi));
             if (mbi.AllocationBase == g_mainImageBase) {
@@ -400,7 +411,11 @@ detach:
           free(lpValueName);
 
           bpTempClear(er.ExceptionAddress);
+#ifdef _WIN64
           ctx.Rip--;
+#else
+          ctx.Eip--;
+#endif
           ctx.EFlags |= 0x100;
           SetThreadContext(g_hThread[de.dwThreadId], &ctx);
         } else if (er.ExceptionCode == EXCEPTION_SINGLE_STEP) {
